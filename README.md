@@ -22,7 +22,7 @@ This is a single-user chat interface that runs locally and talks directly to the
 
 ## Quick Start Guide for Non-Technical Users
 
-Please follow [these instructions](https://github.com/goatpug/claude-api-chat/wiki/Quick-Start-Guide) to get this running!
+Please follow [these instructions](https://github.com/goatpug/claude-api-chat/wiki/Quick-Start-Guide-for-Non%E2%80%90Technical-Users) to get this running!
 
 ## Tech Stack
 
