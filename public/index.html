@@ -81,6 +81,92 @@
       color: #fff;
     }
 
+    /* ── Saved chats panel ── */
+    #chats-panel {
+      display: none;
+      flex-direction: column;
+      gap: 8px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+      max-height: 260px;
+      overflow-y: auto;
+    }
+
+    #chats-panel.visible { display: flex; }
+
+    #chats-panel label {
+      font-size: 12px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      flex-shrink: 0;
+    }
+
+    #chats-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .chats-empty {
+      font-size: 13px;
+      color: var(--text-dim);
+    }
+
+    .chat-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 13px;
+    }
+
+    .chat-row-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .chat-row-date {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-bottom: 2px;
+    }
+
+    .chat-row-preview {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: var(--text);
+    }
+
+    .chat-row-count {
+      font-size: 11px;
+      color: var(--text-dim);
+      white-space: nowrap;
+    }
+
+    .chat-row-actions {
+      display: flex;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+
+    .chat-row-actions button {
+      padding: 4px 8px;
+      font-size: 12px;
+    }
+
+    #btn-chats.active {
+      background: var(--accent-dim);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
     /* ── System prompt panel ── */
     #system-prompt-panel {
       display: none;
@@ -180,6 +266,7 @@
       background: var(--user-bg);
       border: 1px solid var(--user-border);
       border-bottom-right-radius: 4px;
+      white-space: pre-wrap;
     }
 
     .message.assistant .message-bubble {
@@ -345,8 +432,16 @@
     <div id="header">
       <h1>🌶️ Spicy Chat</h1>
       <button id="btn-system-prompt">System Prompt</button>
+      <button id="btn-chats">Chats</button>
+      <button id="btn-save">Save</button>
       <button id="btn-export">Export</button>
       <button id="btn-new-chat">New Chat</button>
+    </div>
+
+    <!-- Saved chats panel -->
+    <div id="chats-panel">
+      <label>Saved Chats</label>
+      <div id="chats-list"><span class="chats-empty">No saved chats yet.</span></div>
     </div>
 
     <!-- System prompt panel -->
@@ -389,7 +484,11 @@
     const messageInput    = document.getElementById('message-input');
     const sendBtn         = document.getElementById('send-btn');
     const btnNewChat      = document.getElementById('btn-new-chat');
+    const btnSave         = document.getElementById('btn-save');
     const btnExport       = document.getElementById('btn-export');
+    const btnChats        = document.getElementById('btn-chats');
+    const chatsPanel      = document.getElementById('chats-panel');
+    const chatsList       = document.getElementById('chats-list');
     const btnSystemPrompt = document.getElementById('btn-system-prompt');
     const systemPanel     = document.getElementById('system-prompt-panel');
     const systemTextarea  = document.getElementById('system-prompt-textarea');
@@ -535,6 +634,109 @@
       }
     }
 
+    // ── Saved chats ──────────────────────────────────────────────────────────
+    function formatChatDate(id) {
+      // id format: 2026-02-24T14-30-00
+      try {
+        const iso = id.replace(/T(\d{2})-(\d{2})-(\d{2})$/, 'T$1:$2:$3');
+        return new Date(iso).toLocaleString(undefined, {
+          month: 'short', day: 'numeric', year: 'numeric',
+          hour: 'numeric', minute: '2-digit',
+        });
+      } catch { return id; }
+    }
+
+    async function loadChatsList() {
+      try {
+        const res = await fetch('/api/chats');
+        const chats = await res.json();
+        chatsList.innerHTML = '';
+        if (chats.length === 0) {
+          chatsList.innerHTML = '<span class="chats-empty">No saved chats yet.</span>';
+          return;
+        }
+        chats.forEach(chat => {
+          const row = document.createElement('div');
+          row.className = 'chat-row';
+          row.dataset.id = chat.id;
+          row.innerHTML = `
+            <div class="chat-row-info">
+              <div class="chat-row-date">${formatChatDate(chat.id)}</div>
+              <div class="chat-row-preview">${chat.preview}</div>
+            </div>
+            <span class="chat-row-count">${chat.messageCount} msg${chat.messageCount !== 1 ? 's' : ''}</span>
+            <div class="chat-row-actions">
+              <button class="btn-load-chat">Load</button>
+              <button class="btn-delete-chat">Delete</button>
+            </div>
+          `;
+          row.querySelector('.btn-load-chat').addEventListener('click', () => loadChat(chat.id));
+          row.querySelector('.btn-delete-chat').addEventListener('click', () => deleteChat(chat.id, row));
+          chatsList.appendChild(row);
+        });
+      } catch (err) {
+        chatsList.innerHTML = `<span class="chats-empty">Failed to load: ${err.message}</span>`;
+      }
+    }
+
+    async function saveChat(silent = false) {
+      try {
+        const res = await fetch('/api/chats', { method: 'POST' });
+        const data = await res.json();
+        if (!silent) {
+          if (data.id) {
+            btnSave.textContent = 'Saved ✓';
+            setTimeout(() => { btnSave.textContent = 'Save'; }, 2000);
+            if (chatsPanel.classList.contains('visible')) loadChatsList();
+          } else {
+            btnSave.textContent = 'Nothing to save';
+            setTimeout(() => { btnSave.textContent = 'Save'; }, 2000);
+          }
+        }
+        return data.id;
+      } catch (err) {
+        if (!silent) renderError('Save failed: ' + err.message);
+        return null;
+      }
+    }
+
+    async function loadChat(id) {
+      const currentMessages = chatArea.querySelectorAll('.message');
+      if (currentMessages.length > 0) {
+        if (!confirm('Load saved chat? This will replace your current conversation.')) return;
+      }
+      try {
+        const res = await fetch(`/api/chats/${id}/load`, { method: 'POST' });
+        if (!res.ok) { renderError('Failed to load chat.'); return; }
+        const messages = await res.json();
+        currentMessages.forEach(m => m.remove());
+        if (messages.length === 0) {
+          showEmptyState(true);
+        } else {
+          showEmptyState(false);
+          messages.forEach(msg => renderMessage(msg.role, msg.content));
+        }
+        // Close chats panel
+        chatsPanel.classList.remove('visible');
+        btnChats.classList.remove('active');
+      } catch (err) {
+        renderError('Failed to load chat: ' + err.message);
+      }
+    }
+
+    async function deleteChat(id, rowEl) {
+      if (!confirm('Delete this saved chat?')) return;
+      try {
+        await fetch(`/api/chats/${id}`, { method: 'DELETE' });
+        rowEl.remove();
+        if (chatsList.children.length === 0) {
+          chatsList.innerHTML = '<span class="chats-empty">No saved chats yet.</span>';
+        }
+      } catch (err) {
+        renderError('Failed to delete: ' + err.message);
+      }
+    }
+
     // ── Export conversation ──────────────────────────────────────────────────
     async function exportChat() {
       try {
@@ -570,13 +772,14 @@
 
     // ── New chat ─────────────────────────────────────────────────────────────
     async function newChat() {
-      if (!confirm('Clear conversation history?')) return;
+      const hasMessages = chatArea.querySelectorAll('.message').length > 0;
+      if (hasMessages) await saveChat(true); // auto-save silently
+      if (!confirm('Clear conversation and start fresh?')) return;
       try {
         await fetch('/api/history', { method: 'DELETE' });
-        // Remove all message elements
-        const messages = chatArea.querySelectorAll('.message');
-        messages.forEach(m => m.remove());
+        chatArea.querySelectorAll('.message').forEach(m => m.remove());
         showEmptyState(true);
+        if (chatsPanel.classList.contains('visible')) loadChatsList();
       } catch (err) {
         renderError('Failed to clear history: ' + err.message);
       }
@@ -615,8 +818,15 @@
 
     messageInput.addEventListener('input', () => autoResize(messageInput));
 
+    btnSave.addEventListener('click', () => saveChat(false));
     btnExport.addEventListener('click', exportChat);
     btnNewChat.addEventListener('click', newChat);
+
+    btnChats.addEventListener('click', () => {
+      const visible = chatsPanel.classList.toggle('visible');
+      btnChats.classList.toggle('active', visible);
+      if (visible) loadChatsList();
+    });
 
     btnSystemPrompt.addEventListener('click', () => {
       const visible = systemPanel.classList.toggle('visible');

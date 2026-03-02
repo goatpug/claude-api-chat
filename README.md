@@ -12,12 +12,17 @@ This is a single-user chat interface that runs locally and talks directly to the
 
 ## Features
 
-✨ **Simple & Clean** — Dark theme, markdown rendering, auto-scrolling
-🔧 **Editable System Prompt** — Change Claude's personality/permissions on the fly (no restart needed)
-💾 **Persistent History** — Conversations saved locally to `history.json`
-📥 **Export Conversations** — Download chat history as markdown
-🎯 **Locked to Sonnet 4.5** — Uses `claude-sonnet-4-5-20250929` specifically (not "latest")
-🔒 **Private** — API key stays server-side, everything runs on your machine
+- ✨ **Simple & Clean** — Dark theme, markdown rendering, auto-scrolling
+- 🔧 **Editable System Prompt** — Change Claude's personality/permissions on the fly (no restart needed)
+- 💾 **Persistent History** — Active conversation saved locally to `history.json`
+- 📂 **Saved Chats** — Save conversations and reload/resume them later
+- 📥 **Export Conversations** — Download chat history as markdown
+- 🎯 **Locked to Sonnet 4.5** — Uses `claude-sonnet-4-5-20250929` specifically (not "latest")
+- 🔒 **Private** — API key stays server-side, everything runs on your machine
+
+## Quick Start Guide for Non-Technical Users
+
+Please follow [these instructions](https://github.com/goatpug/claude-api-chat/wiki/Quick-Start-Guide) to get this running!
 
 ## Tech Stack
 
@@ -91,9 +96,10 @@ claude-api-chat/
 ├── server.js              # Express server + API endpoints
 ├── public/
 │   └── index.html         # Frontend (HTML + CSS + JS)
+├── chats/                 # Saved conversations (auto-created, gitignored)
 ├── system-prompt.txt      # Your editable system prompt (create this!)
 ├── .env                   # API key (create this!)
-├── history.json           # Conversation history (auto-created)
+├── history.json           # Active conversation history (auto-created)
 ├── package.json
 ├── .gitignore
 └── README.md
@@ -108,6 +114,10 @@ The backend exposes these endpoints:
 - `POST /api/chat` — Sends a message and gets Claude's response
 - `GET /api/system-prompt` — Returns current system prompt
 - `PUT /api/system-prompt` — Updates system prompt (takes effect immediately)
+- `GET /api/chats` — Lists all saved chats with metadata
+- `POST /api/chats` — Saves current history as a new chat file
+- `POST /api/chats/:id/load` — Loads a saved chat as the active history
+- `DELETE /api/chats/:id` — Deletes a saved chat
 
 ## Usage
 
@@ -119,9 +129,17 @@ The backend exposes these endpoints:
 - Click **Export** in the header to download the current chat as markdown
 - File saved as `spicy-chat-YYYY-MM-DD.md`
 
+### Saving & Loading Chats
+- Click **Save** to manually save the current conversation to the `chats/` folder
+- Click **Chats** to open the saved chats panel, which shows date, message count, and a preview of each saved chat
+  - **Load** — replaces your active conversation with the saved one (you can keep chatting from where it left off)
+  - **Delete** — permanently removes the saved chat
+- Saved chats are stored as JSON files in `chats/` and are not tracked by git
+
 ### Starting Fresh
 - Click **New Chat** to clear history and start a new conversation
-- You'll be prompted to confirm (can't be undone!)
+- The current conversation is **automatically saved** to `chats/` before clearing, so you never lose anything
+- You'll be prompted to confirm the clear
 
 ### Editing System Prompt
 - Click **System Prompt** to show/hide the editor
@@ -133,7 +151,8 @@ The backend exposes these endpoints:
 This is intentionally bare-bones. It does **not** include:
 
 - ❌ User accounts or authentication
-- ❌ Multiple conversation threads (one history file, clear to reset)
+- ❌ Named/titled conversations (chats are identified by timestamp only)
+- ❌ Multiple simultaneous conversation threads
 - ❌ Image upload support
 - ❌ Streaming responses (messages appear all at once)
 - ❌ Cloud deployment / hosting (localhost only)
@@ -154,10 +173,10 @@ To change these, edit `server.js` line 51-55.
 
 ## Privacy & Security Notes
 
-🔒 **Local Only** — Everything runs on your machine, no external services
-🔑 **API Key Security** — Key stays server-side (never exposed to browser)
-💾 **Data Storage** — Conversations stored in plain text in `history.json`
-🚫 **No Telemetry** — No analytics, no tracking, no phone-home
+- 🔒 **Local Only** — Everything runs on your machine, no external services
+- 🔑 **API Key Security** — Key stays server-side (never exposed to browser)
+- 💾 **Data Storage** — Conversations stored in plain text in `history.json`
+- 🚫 **No Telemetry** — No analytics, no tracking, no phone-home
 
 **Important:** This app has no authentication. Anyone with access to your computer or local network can use it. Don't expose it to the public internet.
 
