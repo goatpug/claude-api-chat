@@ -136,6 +136,16 @@ The backend exposes these endpoints:
   - **Delete** — permanently removes the saved chat
 - Saved chats are stored as JSON files in `chats/` and are not tracked by git
 
+### Importing a Claude.ai Export
+
+If you have an existing Claude.ai conversation exported as markdown (e.g. via a browser extension), you can import it into Spicy Chat and resume it:
+
+```bash
+node import-claude-export.js path/to/export.md
+```
+
+The imported chat will appear in the Chats panel. Images are replaced with `[image: filename]` placeholders. Thinking/reasoning blocks are stripped automatically.
+
 ### Starting Fresh
 - Click **New Chat** to clear history and start a new conversation
 - The current conversation is **automatically saved** to `chats/` before clearing, so you never lose anything

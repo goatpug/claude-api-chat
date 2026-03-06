@@ -469,7 +469,7 @@
         ></textarea>
         <button id="send-btn">Send</button>
       </div>
-      <div id="hint">Enter to send · Shift+Enter for newline</div>
+      <div id="hint">Click Send to send · Enter for newline</div>
     </div>
 
   </div>
@@ -808,13 +808,6 @@
 
     // ── Event listeners ──────────────────────────────────────────────────────
     sendBtn.addEventListener('click', sendMessage);
-
-    messageInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage();
-      }
-    });
 
     messageInput.addEventListener('input', () => autoResize(messageInput));
 
