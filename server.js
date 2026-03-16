@@ -63,7 +63,7 @@ app.post('/api/chat', async (req, res) => {
   try {
     const systemPrompt = loadSystemPrompt();
     const response = await client.messages.create({
-      model: 'claude-opus-4-6',
+      model: process.env.MODEL || 'claude-sonnet-4-5-20250929',
       max_tokens: 2048,
       system: systemPrompt,
       messages: history,

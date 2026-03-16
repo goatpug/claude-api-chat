@@ -17,7 +17,7 @@ This is a single-user chat interface that runs locally and talks directly to the
 - 💾 **Persistent History** — Active conversation saved locally to `history.json`
 - 📂 **Saved Chats** — Save conversations and reload/resume them later
 - 📥 **Export Conversations** — Download chat history as markdown
-- 🎯 **Locked to Sonnet 4.5** — Uses `claude-sonnet-4-5-20250929` specifically (not "latest")
+- 🎯 **Configurable Model** — Set your preferred Claude model in `.env` (defaults to Sonnet 4.5)
 - 🔒 **Private** — API key stays server-side, everything runs on your machine
 
 ## Quick Start Guide for Non-Technical Users
@@ -47,9 +47,12 @@ Create a `.env` file in the project root:
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-api03-your-key-here
+MODEL=claude-sonnet-4-5-20250929
 ```
 
 Get your API key from [console.anthropic.com](https://console.anthropic.com/)
+
+The `MODEL` variable is optional — it defaults to `claude-sonnet-4-5-20250929` if omitted. To switch models, just change this line and restart the server. See [model names](https://docs.anthropic.com/en/docs/about-claude/models) for available options.
 
 ### 3. Create `system-prompt.txt` File
 
@@ -170,16 +173,18 @@ This is intentionally bare-bones. It does **not** include:
 
 ## Model Configuration
 
-The app is locked to **`claude-sonnet-4-5-20250929`** specifically (not "latest" or any other version).
+The model is set via the `MODEL` variable in `.env`. If omitted, it defaults to **`claude-sonnet-4-5-20250929`**.
 
-You may refer to [the other model names here](https://platform.claude.com/docs/en/about-claude/model-deprecations#model-status) if you wish to change it.
+To switch models, update `.env` and restart the server:
+```bash
+MODEL=claude-opus-4-6
+```
 
-Current settings:
-- `model`: `claude-sonnet-4-5-20250929`
+See [available model names](https://docs.anthropic.com/en/docs/about-claude/models) for options.
+
+Other settings:
 - `max_tokens`: `2048`
 - `system`: Contents of `system-prompt.txt`
-
-To change these, edit `server.js` line 51-55.
 
 ## Privacy & Security Notes
 
