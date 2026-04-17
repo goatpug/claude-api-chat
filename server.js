@@ -9,14 +9,17 @@ const PORT = 3000;
 const HISTORY_FILE = path.join(__dirname, 'history.json');
 const SYSTEM_PROMPT_FILE = path.join(__dirname, 'system-prompt.txt');
 const CHATS_DIR = path.join(__dirname, 'chats');
+const UPLOADS_DIR = path.join(__dirname, 'uploads');
 
-// Ensure chats directory exists
+// Ensure directories exist
 if (!fs.existsSync(CHATS_DIR)) fs.mkdirSync(CHATS_DIR);
+if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR);
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+app.use('/uploads', express.static(UPLOADS_DIR));
 
 // Load history from disk, or return empty array
 function loadHistory() {
@@ -39,6 +42,21 @@ function loadSystemPrompt() {
   return fs.readFileSync(SYSTEM_PROMPT_FILE, 'utf8');
 }
 
+// Convert stored history to API-ready messages (resolves image_ref → base64 image blocks)
+function historyToApiMessages(history) {
+  return history.map(msg => {
+    if (typeof msg.content === 'string') return msg;
+    const content = msg.content.map(block => {
+      if (block.type !== 'image_ref') return block;
+      const filePath = path.join(UPLOADS_DIR, block.filename);
+      if (!fs.existsSync(filePath)) return { type: 'text', text: '[image unavailable]' };
+      const data = fs.readFileSync(filePath).toString('base64');
+      return { type: 'image', source: { type: 'base64', media_type: block.mediaType, data } };
+    });
+    return { role: msg.role, content };
+  });
+}
+
 // GET /api/history
 app.get('/api/history', (req, res) => {
   res.json(loadHistory());
@@ -52,13 +70,29 @@ app.delete('/api/history', (req, res) => {
 
 // POST /api/chat
 app.post('/api/chat', async (req, res) => {
-  const { message } = req.body;
-  if (!message || typeof message !== 'string') {
-    return res.status(400).json({ error: 'message is required' });
+  const { message = '', images } = req.body;
+  const hasImages = images && images.length > 0;
+  if (!message.trim() && !hasImages) {
+    return res.status(400).json({ error: 'message or images required' });
+  }
+
+  // Build user message content
+  let userContent;
+  if (hasImages) {
+    userContent = [];
+    for (const img of images) {
+      const ext = (img.mediaType.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+      const filename = `${new Date().toISOString().replace(/[:.]/g, '-')}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+      fs.writeFileSync(path.join(UPLOADS_DIR, filename), Buffer.from(img.data, 'base64'));
+      userContent.push({ type: 'image_ref', filename, mediaType: img.mediaType });
+    }
+    if (message.trim()) userContent.push({ type: 'text', text: message });
+  } else {
+    userContent = message;
   }
 
   const history = loadHistory();
-  history.push({ role: 'user', content: message });
+  history.push({ role: 'user', content: userContent });
 
   try {
     const systemPrompt = loadSystemPrompt();
@@ -66,7 +100,7 @@ app.post('/api/chat', async (req, res) => {
       model: process.env.MODEL || 'claude-sonnet-4-5-20250929',
       max_tokens: 2048,
       system: systemPrompt,
-      messages: history,
+      messages: historyToApiMessages(history),
     });
 
     const assistantMessage = response.content[0].text;
@@ -91,7 +125,16 @@ app.get('/api/chats', (req, res) => {
     try {
       const messages = JSON.parse(fs.readFileSync(path.join(CHATS_DIR, file), 'utf8'));
       const firstUser = messages.find(m => m.role === 'user');
-      const preview = firstUser ? firstUser.content.slice(0, 80).replace(/\n/g, ' ') : '(empty)';
+      let preview = '(empty)';
+      if (firstUser) {
+        if (typeof firstUser.content === 'string') {
+          preview = firstUser.content.slice(0, 80).replace(/\n/g, ' ');
+        } else {
+          const textBlock = firstUser.content.find(b => b.type === 'text');
+          const hasImage = firstUser.content.some(b => b.type === 'image_ref');
+          preview = (hasImage ? '📷 ' : '') + (textBlock ? textBlock.text.slice(0, 80).replace(/\n/g, ' ') : '(image)');
+        }
+      }
       return { id, messageCount: messages.length, preview };
     } catch {
       return { id, messageCount: 0, preview: '(unreadable)' };

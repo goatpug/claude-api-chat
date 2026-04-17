@@ -403,7 +403,69 @@
     #send-btn:hover:not(:disabled) { background: var(--accent); }
     #send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-    /* Spinner */
+    /* ── Image previews (pending send) ── */
+    #image-previews {
+      display: none;
+      gap: 8px;
+      padding: 0 0 8px;
+      flex-wrap: wrap;
+    }
+
+    #image-previews.has-images { display: flex; }
+
+    .img-preview-item {
+      position: relative;
+      flex-shrink: 0;
+    }
+
+    .img-preview-item img {
+      width: 56px;
+      height: 56px;
+      object-fit: cover;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      display: block;
+    }
+
+    .img-preview-remove {
+      position: absolute;
+      top: -5px;
+      right: -5px;
+      background: #555;
+      color: #fff;
+      border: none;
+      border-radius: 50%;
+      width: 18px;
+      height: 18px;
+      font-size: 11px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      line-height: 1;
+    }
+
+    .img-preview-remove:hover { background: var(--error); }
+
+    /* ── Images inside message bubbles ── */
+    .message-image {
+      max-width: 280px;
+      max-height: 280px;
+      border-radius: 8px;
+      display: block;
+      margin-bottom: 6px;
+      cursor: pointer;
+    }
+
+    #attach-btn {
+      height: 44px;
+      padding: 0 10px;
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+
+    /* ── Spinner */
     .spinner {
       display: inline-block;
       width: 14px;
@@ -461,7 +523,10 @@
 
     <!-- Input -->
     <div id="input-area">
+      <div id="image-previews"></div>
       <div id="input-row">
+        <input type="file" id="file-input" accept="image/jpeg,image/png,image/gif,image/webp" multiple style="display:none" />
+        <button id="attach-btn" title="Attach image">📎</button>
         <textarea
           id="message-input"
           placeholder="Type a message…"
@@ -483,6 +548,9 @@
     const emptyState      = document.getElementById('empty-state');
     const messageInput    = document.getElementById('message-input');
     const sendBtn         = document.getElementById('send-btn');
+    const attachBtn       = document.getElementById('attach-btn');
+    const fileInput       = document.getElementById('file-input');
+    const imagePreviews   = document.getElementById('image-previews');
     const btnNewChat      = document.getElementById('btn-new-chat');
     const btnSave         = document.getElementById('btn-save');
     const btnExport       = document.getElementById('btn-export');
@@ -497,6 +565,7 @@
 
     // ── State ────────────────────────────────────────────────────────────────
     let isLoading = false;
+    let pendingImages = []; // [{objectUrl, base64, mediaType, name}]
 
     // ── Helpers ──────────────────────────────────────────────────────────────
     function scrollToBottom() {
@@ -526,22 +595,47 @@
       const bubble = document.createElement('div');
       bubble.className = 'message-bubble';
 
-      if (role === 'assistant') {
-        bubble.innerHTML = marked.parse(content);
+      // Normalise: string content → treat as text block
+      const blocks = typeof content === 'string'
+        ? [{ type: role === 'assistant' ? 'assistant_text' : 'text', text: content }]
+        : content;
 
-        // Copy button
+      let plainText = ''; // for copy button
+
+      blocks.forEach(block => {
+        if (block.type === 'image_ref') {
+          const img = document.createElement('img');
+          img.src = `/uploads/${block.filename}`;
+          img.className = 'message-image';
+          img.alt = 'Attached image';
+          img.addEventListener('click', () => window.open(img.src, '_blank'));
+          bubble.appendChild(img);
+        } else if (block.type === 'text' || block.type === 'assistant_text') {
+          plainText += block.text;
+          if (role === 'assistant') {
+            const div = document.createElement('div');
+            div.innerHTML = marked.parse(block.text);
+            bubble.appendChild(div);
+          } else {
+            const span = document.createElement('span');
+            span.style.whiteSpace = 'pre-wrap';
+            span.textContent = block.text;
+            bubble.appendChild(span);
+          }
+        }
+      });
+
+      if (role === 'assistant') {
         const copyBtn = document.createElement('button');
         copyBtn.className = 'copy-btn';
         copyBtn.textContent = 'Copy';
         copyBtn.addEventListener('click', () => {
-          navigator.clipboard.writeText(content).then(() => {
+          navigator.clipboard.writeText(plainText).then(() => {
             copyBtn.textContent = 'Copied!';
             setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
           });
         });
         bubble.appendChild(copyBtn);
-      } else {
-        bubble.textContent = content;
       }
 
       wrapper.appendChild(bubble);
@@ -606,18 +700,60 @@
     // ── Send message ─────────────────────────────────────────────────────────
     async function sendMessage() {
       const text = messageInput.value.trim();
-      if (!text || isLoading) return;
+      if ((!text && pendingImages.length === 0) || isLoading) return;
 
+      const imagesToSend = [...pendingImages];
       messageInput.value = '';
       autoResize(messageInput);
-      renderMessage('user', text);
+      clearPendingImages();
+
+      // Render user message immediately
+      if (imagesToSend.length > 0) {
+        const content = [
+          ...imagesToSend.map(img => ({ type: 'image_ref', filename: `__pending__`, _objectUrl: img.objectUrl, mediaType: img.mediaType })),
+          ...(text ? [{ type: 'text', text }] : []),
+        ];
+        // Render with object URLs for optimistic display (before server assigns filenames)
+        const wrapper = document.createElement('div');
+        wrapper.classList.add('message', 'user');
+        const label = document.createElement('div');
+        label.className = 'message-label';
+        label.textContent = 'You';
+        wrapper.appendChild(label);
+        const bubble = document.createElement('div');
+        bubble.className = 'message-bubble';
+        imagesToSend.forEach(img => {
+          const imgEl = document.createElement('img');
+          imgEl.src = img.objectUrl;
+          imgEl.className = 'message-image';
+          imgEl.addEventListener('click', () => window.open(imgEl.src, '_blank'));
+          bubble.appendChild(imgEl);
+        });
+        if (text) {
+          const span = document.createElement('span');
+          span.style.whiteSpace = 'pre-wrap';
+          span.textContent = text;
+          bubble.appendChild(span);
+        }
+        wrapper.appendChild(bubble);
+        chatArea.appendChild(wrapper);
+        showEmptyState(false);
+        scrollToBottom();
+      } else {
+        renderMessage('user', text);
+      }
+
       setLoading(true);
 
       try {
+        const body = {
+          message: text,
+          images: imagesToSend.map(img => ({ data: img.base64, mediaType: img.mediaType })),
+        };
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: text }),
+          body: JSON.stringify(body),
         });
         const data = await res.json();
 
@@ -633,6 +769,54 @@
         messageInput.focus();
       }
     }
+
+    // ── Image attach ─────────────────────────────────────────────────────────
+    function renderImagePreviews() {
+      imagePreviews.innerHTML = '';
+      pendingImages.forEach((img, idx) => {
+        const item = document.createElement('div');
+        item.className = 'img-preview-item';
+        const imgEl = document.createElement('img');
+        imgEl.src = img.objectUrl;
+        imgEl.alt = img.name;
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'img-preview-remove';
+        removeBtn.textContent = '×';
+        removeBtn.addEventListener('click', () => {
+          URL.revokeObjectURL(img.objectUrl);
+          pendingImages.splice(idx, 1);
+          renderImagePreviews();
+        });
+        item.appendChild(imgEl);
+        item.appendChild(removeBtn);
+        imagePreviews.appendChild(item);
+      });
+      imagePreviews.classList.toggle('has-images', pendingImages.length > 0);
+    }
+
+    function clearPendingImages() {
+      pendingImages.forEach(img => URL.revokeObjectURL(img.objectUrl));
+      pendingImages = [];
+      renderImagePreviews();
+    }
+
+    fileInput.addEventListener('change', () => {
+      Array.from(fileInput.files).forEach(file => {
+        const objectUrl = URL.createObjectURL(file);
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          pendingImages.push({
+            objectUrl,
+            base64: ev.target.result.split(',')[1],
+            mediaType: file.type,
+            name: file.name,
+          });
+          renderImagePreviews();
+        };
+        reader.readAsDataURL(file);
+      });
+      fileInput.value = '';
+    });
 
     // ── Saved chats ──────────────────────────────────────────────────────────
     function formatChatDate(id) {
@@ -754,7 +938,13 @@
 
         history.forEach(msg => {
           const role = msg.role === 'user' ? '**You:**' : '**Claude:**';
-          markdown += `${role}\n\n${msg.content}\n\n---\n\n`;
+          let body;
+          if (typeof msg.content === 'string') {
+            body = msg.content;
+          } else {
+            body = msg.content.map(b => b.type === 'image_ref' ? `[image: ${b.filename}]` : b.text || '').join('\n\n');
+          }
+          markdown += `${role}\n\n${body}\n\n---\n\n`;
         });
 
         // Create download
@@ -810,6 +1000,8 @@
     sendBtn.addEventListener('click', sendMessage);
 
     messageInput.addEventListener('input', () => autoResize(messageInput));
+
+    attachBtn.addEventListener('click', () => fileInput.click());
 
     btnSave.addEventListener('click', () => saveChat(false));
     btnExport.addEventListener('click', exportChat);
