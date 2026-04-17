@@ -10,12 +10,54 @@ const HISTORY_FILE = path.join(__dirname, 'history.json');
 const SYSTEM_PROMPT_FILE = path.join(__dirname, 'system-prompt.txt');
 const CHATS_DIR = path.join(__dirname, 'chats');
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
+const SIGNAL_BRIDGE = path.join(__dirname, '../signal_bridge/signal_bridge_mcp.py');
 
 // Ensure directories exist
 if (!fs.existsSync(CHATS_DIR)) fs.mkdirSync(CHATS_DIR);
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR);
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+// ── MCP (signal_bridge) ──────────────────────────────────────────────────────
+let mcpClient = null;
+let mcpTools = [];
+
+async function initMcp() {
+  if (mcpClient) return;
+  try {
+    const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+    const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
+
+    const transport = new StdioClientTransport({
+      command: 'python3',
+      args: [SIGNAL_BRIDGE],
+      stderr: 'inherit',
+    });
+
+    const c = new Client({ name: 'spicy-chat', version: '1.0.0' }, { capabilities: {} });
+    await c.connect(transport);
+
+    const { tools } = await c.listTools();
+    mcpTools = tools.map(t => ({
+      name: t.name,
+      description: t.description,
+      input_schema: t.inputSchema,
+    }));
+
+    mcpClient = c;
+    console.log(`MCP: connected to signal_bridge — ${mcpTools.length} tools available`);
+  } catch (err) {
+    console.error(`MCP init failed: ${err.message}`);
+  }
+}
+
+// Filter history to only displayable messages (excludes bare tool_use/tool_result rounds)
+function toDisplayHistory(history) {
+  return history.filter(msg => {
+    if (typeof msg.content === 'string') return true;
+    return Array.isArray(msg.content) && msg.content.some(b => b.type === 'text' || b.type === 'image_ref');
+  });
+}
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -59,7 +101,7 @@ function historyToApiMessages(history) {
 
 // GET /api/history
 app.get('/api/history', (req, res) => {
-  res.json(loadHistory());
+  res.json(toDisplayHistory(loadHistory()));
 });
 
 // DELETE /api/history
@@ -92,27 +134,68 @@ app.post('/api/chat', async (req, res) => {
   }
 
   const history = loadHistory();
-  history.push({ role: 'user', content: userContent });
+  const userMsg = { role: 'user', content: userContent };
 
   try {
     const systemPrompt = loadSystemPrompt();
-    const response = await client.messages.create({
-      model: process.env.MODEL || 'claude-sonnet-4-5-20250929',
-      max_tokens: 2048,
-      system: systemPrompt,
-      messages: historyToApiMessages(history),
-    });
+    await initMcp();
 
-    const assistantMessage = response.content[0].text;
-    history.push({ role: 'assistant', content: assistantMessage });
-    saveHistory(history);
+    let apiMessages = historyToApiMessages([...history, userMsg]);
+    const newMessages = [userMsg];
+    let finalText = '';
 
-    res.json({ response: assistantMessage });
+    while (true) {
+      const params = {
+        model: process.env.MODEL || 'claude-sonnet-4-5-20250929',
+        max_tokens: 2048,
+        system: systemPrompt,
+        messages: apiMessages,
+      };
+      if (mcpTools.length > 0) params.tools = mcpTools;
+
+      const response = await client.messages.create(params);
+
+      if (response.stop_reason !== 'tool_use') {
+        finalText = response.content
+          .filter(b => b.type === 'text')
+          .map(b => b.text)
+          .join('');
+        newMessages.push({ role: 'assistant', content: response.content });
+        break;
+      }
+
+      // Tool use round — execute all tool calls then loop back
+      const assistantMsg = { role: 'assistant', content: response.content };
+      newMessages.push(assistantMsg);
+      apiMessages = [...apiMessages, assistantMsg];
+
+      const toolResults = await Promise.all(
+        response.content
+          .filter(b => b.type === 'tool_use')
+          .map(async (toolUse) => {
+            let resultText;
+            try {
+              const r = await mcpClient.callTool({ name: toolUse.name, arguments: toolUse.input });
+              resultText = (r.content || [])
+                .map(c => c.type === 'text' ? c.text : JSON.stringify(c))
+                .join('');
+            } catch (e) {
+              resultText = `Tool error: ${e.message}`;
+            }
+            console.log(`Tool ${toolUse.name}(${JSON.stringify(toolUse.input)}) → ${resultText}`);
+            return { type: 'tool_result', tool_use_id: toolUse.id, content: resultText };
+          })
+      );
+
+      const toolResultMsg = { role: 'user', content: toolResults };
+      newMessages.push(toolResultMsg);
+      apiMessages = [...apiMessages, toolResultMsg];
+    }
+
+    saveHistory([...history, ...newMessages]);
+    res.json({ response: finalText });
   } catch (err) {
-    // Remove the user message we optimistically added if the API call failed
-    history.pop();
-    saveHistory(history);
-    console.error('Anthropic API error:', err.message);
+    console.error('Chat error:', err.message);
     res.status(500).json({ error: err.message || 'API call failed' });
   }
 });
@@ -160,7 +243,7 @@ app.post('/api/chats/:id/load', (req, res) => {
   if (!fs.existsSync(file)) return res.status(404).json({ error: 'Chat not found' });
   const content = fs.readFileSync(file, 'utf8');
   fs.writeFileSync(HISTORY_FILE, content, 'utf8');
-  res.json(JSON.parse(content));
+  res.json(toDisplayHistory(JSON.parse(content)));
 });
 
 // DELETE /api/chats/:id — delete a saved chat
