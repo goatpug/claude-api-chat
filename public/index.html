@@ -73,6 +73,19 @@
     }
 
     button:hover { background: var(--border); }
+
+    #model-select {
+      background: var(--surface2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 8px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+
+    #model-select:focus { outline: none; border-color: var(--accent); }
     button:active { background: var(--accent-dim); border-color: var(--accent); }
 
     #btn-system-prompt.active {
@@ -493,6 +506,13 @@
     <!-- Header -->
     <div id="header">
       <h1>🌶️ Spicy Chat</h1>
+      <select id="model-select">
+        <option value="claude-opus-4-7">Opus 4.7</option>
+        <option value="claude-opus-4-6">Opus 4.6</option>
+        <option value="claude-sonnet-4-6">Sonnet 4.6</option>
+        <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+        <option value="claude-sonnet-4-5-20250929">Sonnet 4.5</option>
+      </select>
       <button id="btn-system-prompt">System Prompt</button>
       <button id="btn-chats">Chats</button>
       <button id="btn-save">Save</button>
@@ -508,7 +528,7 @@
 
     <!-- System prompt panel -->
     <div id="system-prompt-panel">
-      <label>System Prompt</label>
+      <label id="system-prompt-label">System Prompt</label>
       <textarea id="system-prompt-textarea" spellcheck="false"></textarea>
       <div class="panel-actions">
         <button id="btn-save-system-prompt">Save</button>
@@ -557,11 +577,13 @@
     const btnChats        = document.getElementById('btn-chats');
     const chatsPanel      = document.getElementById('chats-panel');
     const chatsList       = document.getElementById('chats-list');
+    const modelSelect      = document.getElementById('model-select');
     const btnSystemPrompt = document.getElementById('btn-system-prompt');
-    const systemPanel     = document.getElementById('system-prompt-panel');
-    const systemTextarea  = document.getElementById('system-prompt-textarea');
-    const btnSaveSystem   = document.getElementById('btn-save-system-prompt');
-    const saveStatus      = document.getElementById('system-prompt-save-status');
+    const systemPanel          = document.getElementById('system-prompt-panel');
+    const systemPanelLabel     = document.getElementById('system-prompt-label');
+    const systemTextarea       = document.getElementById('system-prompt-textarea');
+    const btnSaveSystem        = document.getElementById('btn-save-system-prompt');
+    const saveStatus           = document.getElementById('system-prompt-save-status');
 
     // ── State ────────────────────────────────────────────────────────────────
     let isLoading = false;
@@ -685,6 +707,46 @@
         renderError('Failed to load history: ' + err.message);
       }
     }
+
+    // ── Model selector ───────────────────────────────────────────────────────
+    const MODEL_LABELS = {
+      'claude-opus-4-7':           'Opus 4.7',
+      'claude-opus-4-6':           'Opus 4.6',
+      'claude-sonnet-4-6':         'Sonnet 4.6',
+      'claude-haiku-4-5-20251001': 'Haiku 4.5',
+      'claude-sonnet-4-5-20250929':'Sonnet 4.5',
+    };
+
+    function updateSystemPromptLabel(model) {
+      const name = MODEL_LABELS[model] || model;
+      systemPanelLabel.textContent = `System Prompt — ${name}`;
+    }
+
+    async function loadCurrentModel() {
+      try {
+        const res = await fetch('/api/model');
+        const data = await res.json();
+        modelSelect.value = data.model;
+        updateSystemPromptLabel(data.model);
+      } catch (err) {
+        console.warn('Could not load current model:', err.message);
+      }
+    }
+
+    modelSelect.addEventListener('change', async () => {
+      const model = modelSelect.value;
+      try {
+        await fetch('/api/model', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model }),
+        });
+        updateSystemPromptLabel(model);
+        if (systemPanel.classList.contains('visible')) await loadSystemPrompt();
+      } catch (err) {
+        console.warn('Could not switch model:', err.message);
+      }
+    });
 
     // ── Load system prompt on startup ────────────────────────────────────────
     async function loadSystemPrompt() {
@@ -843,9 +905,10 @@
           const row = document.createElement('div');
           row.className = 'chat-row';
           row.dataset.id = chat.id;
+          const modelLabel = chat.model ? (MODEL_LABELS[chat.model] || chat.model) : '';
           row.innerHTML = `
             <div class="chat-row-info">
-              <div class="chat-row-date">${formatChatDate(chat.id)}</div>
+              <div class="chat-row-date">${formatChatDate(chat.id)}${modelLabel ? ` · ${modelLabel}` : ''}</div>
               <div class="chat-row-preview">${chat.preview}</div>
             </div>
             <span class="chat-row-count">${chat.messageCount} msg${chat.messageCount !== 1 ? 's' : ''}</span>
@@ -892,7 +955,7 @@
       try {
         const res = await fetch(`/api/chats/${id}/load`, { method: 'POST' });
         if (!res.ok) { renderError('Failed to load chat.'); return; }
-        const messages = await res.json();
+        const { model, messages } = await res.json();
         currentMessages.forEach(m => m.remove());
         if (messages.length === 0) {
           showEmptyState(true);
@@ -900,7 +963,11 @@
           showEmptyState(false);
           messages.forEach(msg => renderMessage(msg.role, msg.content));
         }
-        // Close chats panel
+        if (model) {
+          modelSelect.value = model;
+          updateSystemPromptLabel(model);
+          if (systemPanel.classList.contains('visible')) await loadSystemPrompt();
+        }
         chatsPanel.classList.remove('visible');
         btnChats.classList.remove('active');
       } catch (err) {
@@ -1013,9 +1080,10 @@
       if (visible) loadChatsList();
     });
 
-    btnSystemPrompt.addEventListener('click', () => {
+    btnSystemPrompt.addEventListener('click', async () => {
       const visible = systemPanel.classList.toggle('visible');
       btnSystemPrompt.classList.toggle('active', visible);
+      if (visible) await loadSystemPrompt();
     });
 
     btnSaveSystem.addEventListener('click', saveSystemPrompt);
@@ -1023,6 +1091,7 @@
     // ── Init ─────────────────────────────────────────────────────────────────
     loadHistory();
     loadSystemPrompt();
+    loadCurrentModel();
     messageInput.focus();
   </script>
 </body>

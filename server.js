@@ -7,16 +7,18 @@ const Anthropic = require('@anthropic-ai/sdk');
 const app = express();
 const PORT = 3000;
 const HISTORY_FILE = path.join(__dirname, 'history.json');
-const SYSTEM_PROMPT_FILE = path.join(__dirname, 'system-prompt.txt');
 const CHATS_DIR = path.join(__dirname, 'chats');
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
-const SIGNAL_BRIDGE = path.join(__dirname, '../signal_bridge/signal_bridge_mcp.py');
+const CONTEXTS_DIR = path.join(__dirname, 'contexts');
 
 // Ensure directories exist
 if (!fs.existsSync(CHATS_DIR)) fs.mkdirSync(CHATS_DIR);
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR);
+if (!fs.existsSync(CONTEXTS_DIR)) fs.mkdirSync(CONTEXTS_DIR);
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+let currentModel = process.env.MODEL || 'claude-sonnet-4-5-20250929';
 
 // ── MCP (signal_bridge) ──────────────────────────────────────────────────────
 let mcpClient = null;
@@ -26,13 +28,9 @@ async function initMcp() {
   if (mcpClient) return;
   try {
     const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
-    const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
+    const { SSEClientTransport } = await import('@modelcontextprotocol/sdk/client/sse.js');
 
-    const transport = new StdioClientTransport({
-      command: 'python3',
-      args: [SIGNAL_BRIDGE],
-      stderr: 'inherit',
-    });
+    const transport = new SSEClientTransport(new URL('http://127.0.0.1:8000/sse'));
 
     const c = new Client({ name: 'spicy-chat', version: '1.0.0' }, { capabilities: {} });
     await c.connect(transport);
@@ -78,10 +76,13 @@ function saveHistory(history) {
   fs.writeFileSync(HISTORY_FILE, JSON.stringify(history, null, 2), 'utf8');
 }
 
-// Load system prompt from disk
+// Load system prompt: shared.txt + model-specific file, concatenated
 function loadSystemPrompt() {
-  if (!fs.existsSync(SYSTEM_PROMPT_FILE)) return '';
-  return fs.readFileSync(SYSTEM_PROMPT_FILE, 'utf8');
+  const sharedFile = path.join(CONTEXTS_DIR, 'shared.txt');
+  const modelFile  = path.join(CONTEXTS_DIR, `${currentModel}.txt`);
+  const shared      = fs.existsSync(sharedFile) ? fs.readFileSync(sharedFile, 'utf8').trim() : '';
+  const modelPrompt = fs.existsSync(modelFile)  ? fs.readFileSync(modelFile,  'utf8').trim() : '';
+  return [shared, modelPrompt].filter(Boolean).join('\n\n');
 }
 
 // Convert stored history to API-ready messages (resolves image_ref → base64 image blocks)
@@ -98,6 +99,22 @@ function historyToApiMessages(history) {
     return { role: msg.role, content };
   });
 }
+
+// GET /api/model
+app.get('/api/model', (req, res) => {
+  res.json({ model: currentModel });
+});
+
+// PUT /api/model
+app.put('/api/model', (req, res) => {
+  const { model } = req.body;
+  if (typeof model !== 'string' || !model.trim()) {
+    return res.status(400).json({ error: 'model is required' });
+  }
+  currentModel = model.trim();
+  console.log(`Model switched to: ${currentModel}`);
+  res.json({ ok: true, model: currentModel });
+});
 
 // GET /api/history
 app.get('/api/history', (req, res) => {
@@ -146,7 +163,7 @@ app.post('/api/chat', async (req, res) => {
 
     while (true) {
       const params = {
-        model: process.env.MODEL || 'claude-sonnet-4-5-20250929',
+        model: currentModel,
         max_tokens: 2048,
         system: systemPrompt,
         messages: apiMessages,
@@ -200,13 +217,20 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
+// Parse a chat file — handles both old (array) and new ({ model, messages }) formats
+function parseChatFile(file) {
+  const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (Array.isArray(raw)) return { model: null, messages: raw };
+  return { model: raw.model || null, messages: raw.messages || [] };
+}
+
 // GET /api/chats — list saved chats, newest first
 app.get('/api/chats', (req, res) => {
   const files = fs.readdirSync(CHATS_DIR).filter(f => f.endsWith('.json'));
   const chats = files.map(file => {
     const id = file.replace('.json', '');
     try {
-      const messages = JSON.parse(fs.readFileSync(path.join(CHATS_DIR, file), 'utf8'));
+      const { model, messages } = parseChatFile(path.join(CHATS_DIR, file));
       const firstUser = messages.find(m => m.role === 'user');
       let preview = '(empty)';
       if (firstUser) {
@@ -218,12 +242,11 @@ app.get('/api/chats', (req, res) => {
           preview = (hasImage ? '📷 ' : '') + (textBlock ? textBlock.text.slice(0, 80).replace(/\n/g, ' ') : '(image)');
         }
       }
-      return { id, messageCount: messages.length, preview };
+      return { id, model, messageCount: messages.length, preview };
     } catch {
-      return { id, messageCount: 0, preview: '(unreadable)' };
+      return { id, model: null, messageCount: 0, preview: '(unreadable)' };
     }
   });
-  // Newest first (filenames are timestamps so lexicographic sort works)
   chats.sort((a, b) => b.id.localeCompare(a.id));
   res.json(chats);
 });
@@ -233,7 +256,8 @@ app.post('/api/chats', (req, res) => {
   const history = loadHistory();
   if (history.length === 0) return res.json({ ok: true, id: null });
   const id = new Date().toISOString().replace(/:/g, '-').replace(/\..+/, '');
-  fs.writeFileSync(path.join(CHATS_DIR, `${id}.json`), JSON.stringify(history, null, 2), 'utf8');
+  const payload = { model: currentModel, messages: history };
+  fs.writeFileSync(path.join(CHATS_DIR, `${id}.json`), JSON.stringify(payload, null, 2), 'utf8');
   res.json({ ok: true, id });
 });
 
@@ -241,9 +265,10 @@ app.post('/api/chats', (req, res) => {
 app.post('/api/chats/:id/load', (req, res) => {
   const file = path.join(CHATS_DIR, `${req.params.id}.json`);
   if (!fs.existsSync(file)) return res.status(404).json({ error: 'Chat not found' });
-  const content = fs.readFileSync(file, 'utf8');
-  fs.writeFileSync(HISTORY_FILE, content, 'utf8');
-  res.json(toDisplayHistory(JSON.parse(content)));
+  const { model, messages } = parseChatFile(file);
+  if (model) currentModel = model;
+  saveHistory(messages);
+  res.json({ model, messages: toDisplayHistory(messages) });
 });
 
 // DELETE /api/chats/:id — delete a saved chat
@@ -253,18 +278,20 @@ app.delete('/api/chats/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// GET /api/system-prompt
+// GET /api/system-prompt — returns model-specific content for editing
 app.get('/api/system-prompt', (req, res) => {
-  res.json({ content: loadSystemPrompt() });
+  const modelFile = path.join(CONTEXTS_DIR, `${currentModel}.txt`);
+  const content = fs.existsSync(modelFile) ? fs.readFileSync(modelFile, 'utf8') : '';
+  res.json({ content });
 });
 
-// PUT /api/system-prompt
+// PUT /api/system-prompt — saves to model-specific file
 app.put('/api/system-prompt', (req, res) => {
   const { content } = req.body;
   if (typeof content !== 'string') {
     return res.status(400).json({ error: 'content is required' });
   }
-  fs.writeFileSync(SYSTEM_PROMPT_FILE, content, 'utf8');
+  fs.writeFileSync(path.join(CONTEXTS_DIR, `${currentModel}.txt`), content, 'utf8');
   res.json({ ok: true });
 });
 
