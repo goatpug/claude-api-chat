@@ -49,6 +49,26 @@ async function initMcp() {
   }
 }
 
+async function callMcpTool(name, input) {
+  const exec = async () => {
+    const r = await mcpClient.callTool({ name, arguments: input });
+    return (r.content || []).map(c => c.type === 'text' ? c.text : JSON.stringify(c)).join('');
+  };
+  try {
+    return await exec();
+  } catch (e) {
+    if (e.code === -32602 || e.code === -32600 || e.code === -32000) {
+      // Stale MCP session — reconnect and retry once
+      mcpClient = null;
+      mcpTools = [];
+      await initMcp();
+      if (!mcpClient) throw new Error('MCP reconnect failed');
+      return await exec();
+    }
+    throw e;
+  }
+}
+
 // Filter history to only displayable messages (excludes bare tool_use/tool_result rounds)
 function toDisplayHistory(history) {
   return history.filter(msg => {
@@ -159,7 +179,7 @@ app.post('/api/chat', async (req, res) => {
 
     let apiMessages = historyToApiMessages([...history, userMsg]);
     const newMessages = [userMsg];
-    let finalText = '';
+    const allTexts = [];
 
     while (true) {
       const params = {
@@ -172,11 +192,10 @@ app.post('/api/chat', async (req, res) => {
 
       const response = await client.messages.create(params);
 
+      const roundText = response.content.filter(b => b.type === 'text').map(b => b.text).join('');
+      if (roundText) allTexts.push(roundText);
+
       if (response.stop_reason !== 'tool_use') {
-        finalText = response.content
-          .filter(b => b.type === 'text')
-          .map(b => b.text)
-          .join('');
         newMessages.push({ role: 'assistant', content: response.content });
         break;
       }
@@ -192,10 +211,7 @@ app.post('/api/chat', async (req, res) => {
           .map(async (toolUse) => {
             let resultText;
             try {
-              const r = await mcpClient.callTool({ name: toolUse.name, arguments: toolUse.input });
-              resultText = (r.content || [])
-                .map(c => c.type === 'text' ? c.text : JSON.stringify(c))
-                .join('');
+              resultText = await callMcpTool(toolUse.name, toolUse.input);
             } catch (e) {
               resultText = `Tool error: ${e.message}`;
             }
@@ -210,7 +226,7 @@ app.post('/api/chat', async (req, res) => {
     }
 
     saveHistory([...history, ...newMessages]);
-    res.json({ response: finalText });
+    res.json({ response: allTexts.join('\n\n') });
   } catch (err) {
     console.error('Chat error:', err.message);
     res.status(500).json({ error: err.message || 'API call failed' });
