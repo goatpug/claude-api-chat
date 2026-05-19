@@ -1,4 +1,4 @@
-# Spicy Chat
+# Claude API Chat
 
 A personal chat web app for talking to Claude with full operator-level permissions. Built for private, unfiltered conversations — no platform guardrails, no auth, just you and Claude.
 
@@ -104,7 +104,7 @@ If you want to access from other devices on your local network (e.g. phone, tabl
 ## File Structure
 
 ```
-spicy-chat/
+claude-api-chat/
 ├── server.js              # Express server + API endpoints
 ├── public/
 │   └── index.html         # Frontend (HTML + CSS + JS)
