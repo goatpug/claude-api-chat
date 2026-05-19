@@ -32,7 +32,7 @@ async function initMcp() {
 
     const transport = new SSEClientTransport(new URL('http://127.0.0.1:8000/sse'));
 
-    const c = new Client({ name: 'spicy-chat', version: '1.0.0' }, { capabilities: {} });
+    const c = new Client({ name: 'claude-api-chat', version: '1.0.0' }, { capabilities: {} });
     await c.connect(transport);
 
     const { tools } = await c.listTools();
@@ -312,6 +312,6 @@ app.put('/api/system-prompt', (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Spicy Chat running at http://localhost:${PORT}`);
+  console.log(`Claude API Chat running at http://localhost:${PORT}`);
   console.log(`Access from other devices at http://192.168.0.21:${PORT}`);
 });

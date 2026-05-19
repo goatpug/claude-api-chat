@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * Import a Claude.ai markdown chat export into Spicy Chat.
+ * Import a Claude.ai markdown chat export into Claude API Chat.
  *
  * Usage:
  *   node import-claude-export.js path/to/export.md
  *
- * The imported chat will appear in the Chats panel in Spicy Chat.
+ * The imported chat will appear in the Chats panel in Claude API Chat.
  * Images are replaced with [image: filename] placeholders.
  * Thinking/reasoning blocks are stripped from assistant messages.
  */
@@ -82,4 +82,4 @@ fs.writeFileSync(outFile, JSON.stringify(messages, null, 2), 'utf8');
 
 console.log(`✓ Imported ${messages.length} messages`);
 console.log(`  Saved to: chats/${id}.json`);
-console.log(`  Open the Chats panel in Spicy Chat to load it.`);
+console.log(`  Open the Chats panel in Claude API Chat to load it.`);

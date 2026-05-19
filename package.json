@@ -1,5 +1,5 @@
 {
-  "name": "spicy-chat",
+  "name": "claude-api-chat",
   "version": "1.0.0",
   "description": "Personal Claude chat app with operator-level permissions",
   "main": "server.js",
