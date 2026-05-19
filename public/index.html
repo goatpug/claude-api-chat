@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Spicy Chat</title>
+  <title>Claude API Chat</title>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -505,7 +505,7 @@
 
     <!-- Header -->
     <div id="header">
-      <h1>🌶️ Spicy Chat</h1>
+      <h1>Claude API Chat</h1>
       <select id="model-select">
         <option value="claude-opus-4-7">Opus 4.7</option>
         <option value="claude-opus-4-6">Opus 4.6</option>
@@ -1001,7 +1001,7 @@
 
         // Format as markdown
         const timestamp = new Date().toISOString().split('T')[0];
-        let markdown = `# Spicy Chat Export — ${timestamp}\n\n`;
+        let markdown = `# Claude API Chat Export — ${timestamp}\n\n`;
 
         history.forEach(msg => {
           const role = msg.role === 'user' ? '**You:**' : '**Claude:**';
@@ -1019,7 +1019,7 @@
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `spicy-chat-${timestamp}.md`;
+        a.download = `claude-api-chat-${timestamp}.md`;
         a.click();
         URL.revokeObjectURL(url);
       } catch (err) {
